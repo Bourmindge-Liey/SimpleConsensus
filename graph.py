@@ -27,57 +27,94 @@ class BaseGraph(ABC):
         self.graph = nx.DiGraph() if is_directed else nx.Graph()
 
         # Check non-negativity of adjacency matrix
-        if A is not None and np.any(A < 0):
+        if np.any(A < 0):
             raise ValueError("Adjacency matrix must have non-negative entries.")
         # Check non-connected edge in adjacency matrix equal to zero
-        if A is not None:
-            for i in range(A.shape[0]):
-                for j in range(A.shape[1]):
-                    if i == j and (i, j) in V:
-                        raise ValueError(f"Node {i} cannot have a self-loop.")
-                    if self.is_directed == False and (i, j) not in E and (j, i) not in E and A[i, j] != 0:
-                        raise ValueError(f"Adjacency matrix entry A[{i}, {j}] must be zero for non-connected edges.")
-                    if self.is_directed == True and (i, j) not in E and A[i, j] != 0:
-                        raise ValueError(f"Adjacency matrix entry A[{i}, {j}] must be zero for non-connected edges.")
-        if A is None:
-            A = np.zeros((len(V), len(V)))
-            for u, v in E:
-                A[u, v] = 1
-                if not is_directed:
-                    A[v, u] = 1
+        for i in range(A.shape[0]):
+            for j in range(A.shape[1]):
+                if i == j and (i, j) in V:
+                    raise ValueError(f"Node {i} cannot have a self-loop.")
+                if self.is_directed == False and (i, j) not in E and (j, i) not in E and A[i, j] != 0:
+                    raise ValueError(f"Adjacency matrix entry A[{i}, {j}] must be zero for non-connected edges.")
+                if self.is_directed == True and (i, j) not in E and A[i, j] != 0:
+                    raise ValueError(f"Adjacency matrix entry A[{i}, {j}] must be zero for non-connected edges.")
 
         self.graph.add_nodes_from(V)
         for u, v in E:
             self.graph.add_edge(u, v, weight=A[u, v])
         self.adj = A
 
-        def balanced(self) -> bool:
-            """Check if the graph is balanced.
 
-            A directed graph is balanced if for every node, the in-degree equals the out-degree.
+    def balanced(self) -> bool:
+        """Check if the graph is balanced.
 
-            Returns:
-                bool: True if the graph is balanced, False otherwise.
-            """
-            # undirected graphs are always balanced``
-            if not self.is_directed:
-                return True
-            for node in self.graph.nodes():
-                if self.graph.in_degree(node) != self.graph.out_degree(node):
-                    return False
+        A directed graph is balanced if for every node, the in-degree equals the out-degree.
+
+        Returns:
+            bool: True if the graph is balanced, False otherwise.
+        """
+        # undirected graphs are always balanced``
+        if not self.is_directed:
             return True
+        for node in self.graph.nodes():
+            if self.graph.in_degree(node) != self.graph.out_degree(node):
+                return False
+        return True
+
+
+    def strongly_connected(self) -> bool:
+        """Check if the directed graph is strongly connected.
+
+        A directed graph is strongly connected if there is a path from any node to every other node.
+
+        Returns:
+            bool: True if the graph is strongly connected, False otherwise.
+        """
+        if not self.is_directed:
+            return True
+        return nx.is_strongly_connected(self.graph)
 
 
 class UnDiGraph(BaseGraph):
 
     def __init__(self, V: tuple[int], E: list[tuple[int, int]], A: np.ndarray | None = None):
+
+        if A is None:
+            A = np.zeros((len(V), len(V)))
+            for u, v in E:
+                A[u, v] = 1
+                A[v, u] = 1
         # Check symmetry of adjacency matrix
-        if A is not None and not np.array_equal(A, A.T):
-            raise ValueError("Adjacency matrix must be symmetric for undirected graphs.")
+        if not np.array_equal(A, A.T):
+            raise ValueError("A must be symmetric for undirected graphs.")
+        for i in range(A.shape[0]):
+            if A[i, i] != 0 or (i, i) in E:
+                raise ValueError(f"Node {i} cannot have a self-loop.")
+            for j in range(A.shape[1]):
+                if (i, j) not in E and (j, i) not in E and A[i, j] != 0:
+                    raise ValueError(f"A[{i}, {j}] must be zero for non-connected edges.")
+                if A[i, j] == 0:
+                    if (i, j) in E or (j, i) in E:
+                        raise ValueError(f"A[{i}, {j}] must be non-zero for connected edges.")
+
         super().__init__(is_directed=False, V=V, E=E, A=A)
 
 
 class DiGraph(BaseGraph):
 
     def __init__(self, V: tuple[int], E: list[tuple[int, int]], A: np.ndarray | None = None):
+
+        if A is None:
+            A = np.zeros((len(V), len(V)))
+            for u, v in E:
+                A[u, v] = 1
+        for i in range(A.shape[0]):
+            if A[i, i] != 0 or (i, i) in E:
+                raise ValueError(f"Node {i} cannot have a self-loop.")
+            for j in range(A.shape[1]):
+                if (i, j) not in E and A[i, j] != 0:
+                    raise ValueError(f"A[{i}, {j}] must be zero for non-connected edges.")
+                if (i, j) in E and A[i, j] == 0:
+                    raise ValueError(f"A[{i}, {j}] must be non-zero for connected edges.")        
+
         super().__init__(is_directed=True, V=V, E=E, A=A)
