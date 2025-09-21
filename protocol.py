@@ -20,10 +20,11 @@ class BaseProtocol(ABC):
 class A1Protocol(BaseProtocol):
     def __init__(self, G: BaseGraph):
         super().__init__("A1")
-        self.L = np.diag(np.sum(G.adj, axis=1)) - G.adj
+        self.L = np.diag(np.sum(G.A, axis=1)) - G.A
 
     def __call__(self, x: np.ndarray | ca.MX) -> np.ndarray | ca.MX:
         return - self.L @ x
     
     def update_graph(self, G: BaseGraph):
-        self.L = np.diag(np.sum(G.adj, axis=1)) - G.adj
+        self.L = np.diag(np.sum(G.A, axis=1)) - G.A
+

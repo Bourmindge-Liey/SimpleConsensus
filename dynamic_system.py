@@ -17,18 +17,17 @@ class MultiAgentSystem(ABC):
         Args:
             G (BaseGraph): The underlying graph.
             P (BaseProtocol): The protocol for agent communication.
-            dt (float): Time step for simulation.
             x0 (np.ndarray): Initial states of the agents.
         """
         
         self.G = G
         self.P = P(G)
-        self.L = self.P.L
+        self.L = self.P.L 
         self.n = G.graph.number_of_nodes()
 
-        self.x = ca.MX.sym('x', self.n)  # State vector
-        self.u = ca.Function("u", [self.x], [self.P(self.x)])  # Control input
-        self.disagreement = ca.Function("disagree", [self.x], [self.x.T @ self.G.adj @ self.x])  # Disagreement function
+        x = ca.MX.sym('x', self.n)  # State vector
+        self.u = ca.Function("u", [x], [self.P(x)])  # Control input
+        self.disagreement = ca.Function("disagree", [x], [x.T @ self.L @ x])  # Disagreement function
 
         x0 = np.zeros((self.n)) if x0 is None else x0
         self.reset(x0)
@@ -49,11 +48,48 @@ class MultiAgentSystem(ABC):
         for i in range(len(sim_result["time"])):
             sim_result["x"][:, i] = x
             sim_result["u"][:, i] = self.u(x).full().flatten()
-            sim_result["disagreement"][i] = self.disagreement(x)
             sim_result["consensus"][i] = self.get_consensus(Consensus("average"), x)
+            sim_result["disagreement"][i] = self.disagreement(x - sim_result["consensus"][i])
             x = Ld @ x
 
         return sim_result
+
+
+    def sim_delayed(self, t_e: float, tau: np.ndarray, dt: float = 0.01) -> dict:
+        """Simulate the multi-agent system with communication delays.
+        
+        Args:
+            t_e (float): End time of the simulation.
+            tau (np.ndarray): Communication delays for each agent.
+            dt (float): Time step for the simulation.
+        """
+        n_steps = int(t_e / dt) + 1
+        delay_steps = (tau / dt).astype(int) 
+        sim_result = {
+            "time": np.linspace(0, t_e, n_steps),
+            "x": np.zeros((self.n, n_steps)),
+            "u": np.zeros((self.n, n_steps)),
+            "disagreement": np.zeros(n_steps),
+            "consensus": np.zeros(n_steps),
+        }
+
+        x = self.x0
+        for i in range(n_steps):
+            sim_result["x"][:, i] = x
+
+            idx = np.maximum(0, i - delay_steps)           # (n,n)
+            x_k = sim_result["x"][np.arange(self.n), idx]  # (n,n): delayed neighbor states
+            x_j = sim_result["x"][np.arange(self.n)[:,None], idx]  # (n,n): delayed self states
+            diff = x_k - x_j
+            u = np.sum(self.G.A * diff, axis=1)
+            
+            sim_result["u"][:, i] = u
+            sim_result["consensus"][i] = self.get_consensus(Consensus("average"), x)
+            sim_result["disagreement"][i] = self.disagreement(x - sim_result["consensus"][i])
+            x += u * dt
+
+        return sim_result
+
 
     def switch_graph(self, G: BaseGraph):
         """Switch the underlying graph.
@@ -69,19 +105,23 @@ class MultiAgentSystem(ABC):
         self.G = G
         self.P.update_graph(G)
         self.L = self.P.L
-        self.u = ca.Function("u", [self.x], [self.P(self.x)])  # Control input
-        self.disagreement = ca.Function("disagree", [self.x], [self.x.T @ self.G.adj @ self.x])  # Disagreement function
+
+        x = ca.MX.sym('x', self.n)
+        self.u = ca.Function("u", [x], [self.P(x)])  # Control input
+        self.disagreement = ca.Function("disagree", [x], [x.T @ self.L @ x])  # Disagreement function
 
 
     def reset(self, x0: np.ndarray):
         """Reset the states of the agents.
-
+    
         Args:
             x0 (np.ndarray): Initial states of the agents.
         """
+        if x0.shape != (self.n,):
+            raise ValueError(f"x0 must be of shape ({self.n},), but got {x0.shape}.")
         self.x0 = x0
     
-        
+    
     def get_consensus(self, C: Consensus, x: np.ndarray) -> float:
         """Get the consensus value.
 
@@ -92,3 +132,15 @@ class MultiAgentSystem(ABC):
             float: The consensus value.
         """
         return C(x)
+
+
+    def algebraic_connectivity(self) -> float:
+        """Get the algebraic connectivity of the underlying graph.
+
+        Returns:
+            float: The algebraic connectivity.
+        """
+        if not self.G.is_directed:
+            raise ValueError("Algebraic connectivity is only defined for directed graphs.")
+        return np.real(np.sort(np.linalg.eigvals(self.L))[1])  # Second smallest eigenvalue
+

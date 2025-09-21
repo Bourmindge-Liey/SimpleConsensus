@@ -10,6 +10,7 @@ This provides graphs built on top of NetworkX.
 from abc import ABC
 import numpy as np
 import networkx as nx
+from copy import deepcopy
 
 class BaseGraph(ABC):
     """Base graph class."""
@@ -42,7 +43,9 @@ class BaseGraph(ABC):
         self.graph.add_nodes_from(V)
         for u, v in E:
             self.graph.add_edge(u, v, weight=A[u, v])
-        self.adj = A
+        self.V = V
+        self.E = E
+        self.A = A
 
 
     def balanced(self) -> bool:
@@ -118,3 +121,25 @@ class DiGraph(BaseGraph):
                     raise ValueError(f"A[{i}, {j}] must be non-zero for connected edges.")        
 
         super().__init__(is_directed=True, V=V, E=E, A=A)
+
+
+def get_mirror(G: BaseGraph) -> UnDiGraph:
+    """Get the mirror graph of a directed graph.
+
+    The mirror graph is obtained by adding reverse edges to all existing edges.
+
+    Args:
+        G (BaseGraph): The original directed graph.
+
+    Returns:
+        BaseGraph: The mirror graph.
+    """
+    if isinstance(G, UnDiGraph):
+        return deepcopy(G)
+    V_mirror = G.V
+    E_mirror = []
+    for u, v in G.E:
+        if (v, u) not in E_mirror or (u, v) not in E_mirror:
+            E_mirror.append((u, v))
+    A_mirror = 0.5 * (G.A.T + G.A)
+    return UnDiGraph(V=V_mirror, E=E_mirror, A=A_mirror)
