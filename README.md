@@ -44,7 +44,9 @@ $$\Phi_G(x) = \frac{1}{2}x^T L x $$
 ## Consensus 
 
 1. Average Consensus
+
 $$ \alpha = \text{Avg}(x)$$
 
 2. Max/Min Consensus 
+
 $$ \alpha = \max | \min (x)$$
