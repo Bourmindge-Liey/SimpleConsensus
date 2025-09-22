@@ -39,7 +39,7 @@ $$ L = \text{diag}(A \cdot \textbf{1}) - A $$
 
 ## Disagreement
 
-$$\Phi_G(x) = \frac{1}{2}x^T A x $$
+$$\Phi_G(x) = \frac{1}{2}x^T L x $$
 
 ## Consensus 
 
