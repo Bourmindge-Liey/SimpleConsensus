@@ -12,14 +12,22 @@ class BaseProtocol(ABC):
     def __call__(self, x):
         pass
 
-    @abstractmethod
-    def update_graph(self, G: BaseGraph):
-        pass
 
+class NumProtocol(BaseProtocol):
+    """Distributed protocol based on adjacency matrix.
+    $$ u_i = \sum^N_j=1 a_ij(x_j - x_i) $$
+    """
+    def __init__(self):
+        super().__init__("distributed")
 
-class A1Protocol(BaseProtocol):
+    def __call__(self, Ai: np.array, x_k: np.ndarray, x_i: np.ndarray) -> np.ndarray:
+        return Ai @ (x_k - x_i)
+    
+
+"""implemented for analytical simulation and matrix calculation"""
+class AnaProtocol(BaseProtocol):
     def __init__(self, G: BaseGraph):
-        super().__init__("A1")
+        super().__init__("matrix")
         self.L = np.diag(np.sum(G.A, axis=1)) - G.A
 
     def __call__(self, x: np.ndarray | ca.MX) -> np.ndarray | ca.MX:
@@ -27,4 +35,3 @@ class A1Protocol(BaseProtocol):
     
     def update_graph(self, G: BaseGraph):
         self.L = np.diag(np.sum(G.A, axis=1)) - G.A
-

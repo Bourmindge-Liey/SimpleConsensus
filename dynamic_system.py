@@ -11,60 +11,49 @@ from consensus import Consensus
 
 class MultiAgentSystem(ABC):
 
-    def __init__(self, G: BaseGraph, P: BaseProtocol, x0: np.ndarray = None):
+    def __init__(self, G: BaseGraph, T_delay: np.array = None):
         """Initialize the multi-agent system.
 
         Args:
-            G (BaseGraph): The underlying graph.
-            P (BaseProtocol): The protocol for agent communication.
-            x0 (np.ndarray): Initial states of the agents.
+            G: The graph.
+            T_delay: n*n matrix, t_ij is delay i->j. Defaults is 0.
         """
         
+        # System Proterties
         self.G = G
-        self.P = P(G)
-        self.L = self.P.L 
         self.n = G.graph.number_of_nodes()
 
+        if T_delay is not None:
+            if T_delay.shape != (self.n, self.n):
+                raise ValueError(f"T_delay must be of shape ({self.n}, {self.n}), but got {T_delay.shape}.")
+            if np.any(T_delay < 0):
+                raise ValueError("T_delay must be non-negative.")
+        else:
+            T_delay = np.zeros((self.n, self.n))
+        self.T_delay = T_delay
+
+        # Disagreement expression
         x = ca.MX.sym('x', self.n)  # State vector
-        self.u = ca.Function("u", [x], [self.P(x)])  # Control input
-        self.disagreement = ca.Function("disagree", [x], [x.T @ self.L @ x])  # Disagreement function
+        self.disagreement = ca.Function("disagree", [x], [x.T @ x]) 
 
-        x0 = np.zeros((self.n)) if x0 is None else x0
-        self.reset(x0)
-
-
-    def simulate(self, t_e: float, dt: float = 0.01) -> dict:
-        n_steps = int(t_e / dt) + 1
-        sim_result = {
-            "time": np.linspace(0, t_e, n_steps),
-            "x": np.zeros((self.n, n_steps)),
-            "u": np.zeros((self.n, n_steps)),
-            "disagreement": np.zeros(n_steps),
-            "consensus": np.zeros(n_steps),
-        }
-        Ld = expm(-self.L * dt)
-
-        x = self.x0
-        for i in range(len(sim_result["time"])):
-            sim_result["x"][:, i] = x
-            sim_result["u"][:, i] = self.u(x).full().flatten()
-            sim_result["consensus"][i] = self.get_consensus(Consensus("average"), x)
-            sim_result["disagreement"][i] = self.disagreement(x - sim_result["consensus"][i])
-            x = Ld @ x
-
-        return sim_result
+        # reset states
+        self.x0 = np.zeros((self.n))
+        self.reset(np.zeros((self.n)))
 
 
-    def sim_delayed(self, t_e: float, tau: np.ndarray, dt: float = 0.01) -> dict:
-        """Simulate the multi-agent system with communication delays.
-        
+    def simulate_numerical(self, P: BaseProtocol, t_e: float, dt: float = 0.01) -> dict:
+        """Simulate the multi-agent system using numerical integration.
+
+        $$ x(t + dt) = x(t) + u(t) \cdot dt $$
+
         Args:
-            t_e (float): End time of the simulation.
-            tau (np.ndarray): Communication delays for each agent.
-            dt (float): Time step for the simulation.
+            P: The protocol.
+            t_e: End time of the simulation.
+            dt: Time step for the simulation.
         """
+        # Initialize result storage
         n_steps = int(t_e / dt) + 1
-        delay_steps = (tau / dt).astype(int) 
+        delay_steps = (self.T_delay / dt).astype(int) 
         sim_result = {
             "time": np.linspace(0, t_e, n_steps),
             "x": np.zeros((self.n, n_steps)),
@@ -73,20 +62,57 @@ class MultiAgentSystem(ABC):
             "consensus": np.zeros(n_steps),
         }
 
+        Pi = P()
         x = self.x0
         for i in range(n_steps):
             sim_result["x"][:, i] = x
 
             idx = np.maximum(0, i - delay_steps)           # (n,n)
             x_k = sim_result["x"][np.arange(self.n), idx]  # (n,n): delayed neighbor states
-            x_j = sim_result["x"][np.arange(self.n)[:,None], idx]  # (n,n): delayed self states
-            diff = x_k - x_j
-            u = np.sum(self.G.A * diff, axis=1)
-            
+            x_j = sim_result["x"][np.arange(self.n).reshape(-1, 1), idx]  # (n,n): delayed self states
+            u = np.array([Pi(self.G.A[j, :], x_k[j, :], x_j[j, :]) for j in range(self.n)])
             sim_result["u"][:, i] = u
-            sim_result["consensus"][i] = self.get_consensus(Consensus("average"), x)
+
+            sim_result["consensus"][i] = Consensus("average")(x)
             sim_result["disagreement"][i] = self.disagreement(x - sim_result["consensus"][i])
             x += u * dt
+        self.x0 = x
+
+        return sim_result
+
+
+    def simulate_analytical(self, P: BaseProtocol, t_e: float, dt: float = 0.01) -> dict:
+        """Simulate the multi-agent system using analytical solution.
+        
+        $$ x(t) = e^(-Lt)x0 $$
+
+        Args:
+            P: The protocol.
+            t_e: End time of the simulation.
+            dt: Time step for the simulation.
+        """
+        # initialize simulation result
+        n_steps = int(t_e / dt) + 1
+        sim_result = {
+            "time": np.linspace(0, t_e, n_steps),
+            "x": np.zeros((self.n, n_steps)),
+            "u": np.zeros((self.n, n_steps)),
+            "disagreement": np.zeros(n_steps),
+            "consensus": np.zeros(n_steps),
+        }
+
+        # precompute matrix exponential
+        Pi = P(self.G)
+        Ld = expm(-Pi.L * dt)
+
+        x = self.x0
+        for i in range(len(sim_result["time"])):
+            sim_result["x"][:, i] = x
+            sim_result["u"][:, i] = Pi(x)
+            sim_result["consensus"][i] = Consensus("average")(x)
+            sim_result["disagreement"][i] = self.disagreement(x - sim_result["consensus"][i])
+            x = Ld @ x
+        self.x0 = x
 
         return sim_result
 
@@ -97,18 +123,21 @@ class MultiAgentSystem(ABC):
         Graph, protocol, and disagreement function are updated accordingly.
 
         Args:
-            G (BaseGraph): The new graph.
+            G : The new graph.
         """
         if G.graph.number_of_nodes() != self.n:
             raise ValueError("The new graph must have the same number of nodes as the current graph.")
-        
         self.G = G
-        self.P.update_graph(G)
-        self.L = self.P.L
 
-        x = ca.MX.sym('x', self.n)
-        self.u = ca.Function("u", [x], [self.P(x)])  # Control input
-        self.disagreement = ca.Function("disagree", [x], [x.T @ self.L @ x])  # Disagreement function
+    
+    def switch_delay(self, T_delay: np.array):
+        """Update the communication delay matrix."""
+        if T_delay is not None:
+            if T_delay.shape != (self.n, self.n):
+                raise ValueError(f"T_delay must be of shape ({self.n}, {self.n}), but got {T_delay.shape}.")
+            if np.any(T_delay < 0):
+                raise ValueError("T_delay must be non-negative.")
+            self.T_delay = T_delay
 
 
     def reset(self, x0: np.ndarray):
@@ -120,27 +149,16 @@ class MultiAgentSystem(ABC):
         if x0.shape != (self.n,):
             raise ValueError(f"x0 must be of shape ({self.n},), but got {x0.shape}.")
         self.x0 = x0
-    
-    
-    def get_consensus(self, C: Consensus, x: np.ndarray) -> float:
-        """Get the consensus value.
-
-        Args:
-            C (Consensus): The consensus protocol.
-
-        Returns:
-            float: The consensus value.
-        """
-        return C(x)
 
 
     def algebraic_connectivity(self) -> float:
         """Get the algebraic connectivity of the underlying graph.
-
+        i.e. Second smallest eigenvalue
+        
         Returns:
             float: The algebraic connectivity.
         """
         if not self.G.is_directed:
             raise ValueError("Algebraic connectivity is only defined for directed graphs.")
-        return np.real(np.sort(np.linalg.eigvals(self.L))[1])  # Second smallest eigenvalue
+        return np.real(np.sort(np.linalg.eigvals(nx.laplacian_matrix(self.G.graph)))[1]) 
 
